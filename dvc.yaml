@@ -1,0 +1,43 @@
+# Data + model lineage with DVC (optional):  pip install dvc && git init && dvc init && dvc repro
+# `dvc repro` re-runs only stages whose deps/params changed; `dvc push` versions data in remote storage.
+stages:
+  ingest:
+    cmd: python -m sentiment ingest
+    deps:
+      - data/raw/sentiment140
+      - src/sentiment/data
+    params:
+      - configs/pipeline.yaml:
+          - ingest
+    outs:
+      - data/interim:
+          persist: false
+
+  split:
+    cmd: python -m sentiment split
+    deps:
+      - data/interim
+      - src/sentiment/splitting.py
+      - src/sentiment/data/quality.py
+    params:
+      - configs/pipeline.yaml:
+          - split
+          - seed
+    outs:
+      - data/processed
+
+  train:
+    cmd: python -m sentiment train
+    deps:
+      - data/processed
+      - src/sentiment/models
+      - src/sentiment/preprocessing
+      - src/sentiment/features
+    params:
+      - configs/pipeline.yaml:
+          - preprocess
+          - train
+          - evaluate
+    outs:
+      - artifacts/registry:
+          cache: false

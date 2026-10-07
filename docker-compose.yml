@@ -1,0 +1,57 @@
+# docker compose up -d --build          -> API + Prometheus + Grafana
+# docker compose --profile tracking up -d -> also an MLflow tracking server on :5000
+services:
+  api:
+    build: .
+    image: sentiment-api:1.0.0
+    ports: ["8000:8000"]
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
+      LOG_LEVEL: INFO
+    volumes:
+      - ./artifacts:/app/artifacts:ro       # model registry (champion is resolved at startup / reload)
+      - ./logs:/app/logs                    # prediction logs for offline drift reports
+      - hf-cache:/app/.cache
+    deploy:
+      resources:
+        limits: {cpus: "4", memory: 3g}
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports: ["9090:9090"]
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prom-data:/prometheus
+    depends_on: [api]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+  mlflow:
+    profiles: ["tracking"]
+    image: ghcr.io/mlflow/mlflow:v3.17.0
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts --serve-artifacts
+    ports: ["5000:5000"]
+    volumes:
+      - mlflow-data:/mlflow
+
+volumes:
+  hf-cache:
+  prom-data:
+  mlflow-data:

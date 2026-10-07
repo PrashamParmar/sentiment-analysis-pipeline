@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentiment Console</title>
+<style>
+  :root { --bg:#f7f7f8; --fg:#1b1b1f; --muted:#6b6b76; --card:#fff; --border:#e3e3e8; --pos:#1f8a4c; --neg:#c23b3b; --unc:#b7791f; --accent:#3b5bdb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141417; --fg:#ececf1; --muted:#9a9aa6; --card:#1d1d22; --border:#2e2e36; --pos:#4cc38a; --neg:#f06a6a; --unc:#e0a84a; --accent:#7d93ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  textarea { width:100%; min-height:140px; padding:12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--fg); font:inherit; resize:vertical; }
+  button { margin-top:10px; padding:9px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-top:10px; }
+  .row { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
+  .text { flex:1 1 300px; overflow-wrap:anywhere; }
+  .badge { font-weight:600; padding:2px 10px; border-radius:99px; font-size:.85rem; color:#fff; }
+  .positive { background:var(--pos); } .negative { background:var(--neg); }
+  .unc { color:var(--unc); font-size:.8rem; margin-left:6px; }
+  .bar { height:6px; background:var(--border); border-radius:4px; margin-top:8px; position:relative; }
+  .fill { height:100%; border-radius:4px; background:linear-gradient(90deg, var(--neg), var(--pos)); }
+  .thr { position:absolute; top:-3px; width:2px; height:12px; background:var(--fg); }
+  pre { white-space:pre-wrap; font-size:.8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sentiment Console</h1>
+  <div class="muted" id="model">loading model info…</div>
+  <p class="muted">One text per line. Inputs are micro-batched by the API. The decision threshold is tuned for a low false-positive rate.</p>
+  <textarea id="input">I absolutely love this, best purchase ever!
+not good at all, very disappointed
+yeah right, best day ever /s
+😍😍😍</textarea>
+  <button id="go">Analyze</button>
+  <div id="out"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+fetch('/v1/model').then(r => r.ok ? r.json() : Promise.reject(r.status)).then(m => {
+  $('model').textContent = `${m.model_name} · threshold ${m.threshold.toFixed(3)} · ${m.quantized ? 'int8' : 'fp32'}`;
+}).catch(e => $('model').textContent = 'model not loaded (' + e + ')');
+$('go').onclick = async () => {
+  const texts = $('input').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!texts.length) return;
+  $('go').disabled = true;
+  try {
+    const r = await fetch('/v1/predict', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({texts})});
+    const data = await r.json();
+    if (!r.ok) { $('out').innerHTML = `<div class="card"><pre>${esc(JSON.stringify(data, null, 2))}</pre></div>`; return; }
+    $('out').innerHTML = data.predictions.map((p, i) => `
+      <div class="card">
+        <div class="row">
+          <div class="text">${esc(texts[i])}</div>
+          <div><span class="badge ${p.label}">${p.label}</span>${p.uncertain ? '<span class="unc">uncertain</span>' : ''}</div>
+        </div>
+        <div class="bar"><div class="fill" style="width:${(p.score*100).toFixed(1)}%"></div><div class="thr" style="left:${(data.threshold*100).toFixed(1)}%"></div></div>
+        <div class="muted">P(positive) = ${p.score.toFixed(3)} · OOV ${(p.oov_rate*100).toFixed(0)}%${p.cached ? ' · cached' : ''}</div>
+      </div>`).join('');
+  } finally { $('go').disabled = false; }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+=====================================================================================
+              SENTIMENT ANALYSIS PROJECT  -  HOW TO RUN (step-by-step guide)
+=====================================================================================
+Project folder:  D:\Prasham's PDEU studies\Project - fullstack
+
+-------------------------------------------------------------------------------------
+QUICK START (the 3 steps you need 95% of the time)
+-------------------------------------------------------------------------------------
+ 1. Start "Docker Desktop" from the Start menu. Wait until it says "Engine running"
+    (whale icon in the taskbar stops animating).
+
+ 2. Open PowerShell in the project folder and run:
+
+        cd "D:\Prasham's PDEU studies\Project - fullstack"
+        $env:ADMIN_TOKEN = "local-admin"
+        docker compose up -d
+
+ 3. Wait about 30 seconds, then open in your browser:
+
+        http://127.0.0.1:8000
+
+    Type sentences (one per line) and click "Analyze".
+
+ To STOP everything when you are done:
+
+        docker compose down
+
+
+=====================================================================================
+PART 1 - WHAT IS RUNNING? (the 4 web pages)
+=====================================================================================
+
+ [1] SENTIMENT DEMO PAGE   ->  http://127.0.0.1:8000
+     THIS IS YOUR MAIN HOME PAGE. Use it to analyse text.
+     - Type one sentence per line, click "Analyze".
+     - Each line shows: positive / negative, a score bar (0 = negative, 1 = positive),
+       a black tick mark = the decision threshold, and "uncertain" if the model
+       is not sure (borderline cases, empty text, unknown words).
+     - The model is tuned to AVOID calling negative text "positive" (false positives),
+       so it only says "positive" when it is very confident (score >= ~0.91).
+
+ [2] API DOCS (Swagger)    ->  http://127.0.0.1:8000/docs
+     A page FOR DEVELOPERS. It lists every API endpoint and lets you test them
+     from the browser:
+       - click "POST /v1/predict"  ->  "Try it out"  ->  edit the JSON  ->  "Execute"
+     Use this when you want to connect another program (website, app, script)
+     to the sentiment model.
+
+ [3] GRAFANA               ->  http://127.0.0.1:3000      (login: admin / admin)
+     A MONITORING DASHBOARD (graphs). It shows how the service is doing over time:
+       - requests per second, response time (latency)
+       - how many positive vs negative predictions
+       - "drift": whether incoming text looks different from the training data
+         (e.g. new slang, another language) -> a sign the model needs retraining
+     Open: Dashboards -> Sentiment -> "Sentiment API".
+     If it asks to change the password you can click "Skip".
+     Graphs are empty until some requests have been sent (use the demo page).
+
+ [4] PROMETHEUS            ->  http://127.0.0.1:9090
+     The DATABASE behind Grafana. Every 10 seconds it collects numbers (metrics)
+     from the API and stores them. Grafana draws the graphs from Prometheus.
+     You normally do not need to open it. Useful pages:
+       - Status -> Targets : "sentiment-api" must be UP (green)
+       - Alerts            : warning rules (slow responses, errors, data drift)
+
+ In short:  Demo page = use the model.   Docs = for programmers.
+            Grafana = health graphs.     Prometheus = data source for Grafana.
+
+
+=====================================================================================
+PART 2 - FIRST TIME / AFTER RESTARTING THE LAPTOP
+=====================================================================================
+ Everything is already installed. After a laptop restart you only need:
+
+   1. Start Docker Desktop and wait for "Engine running".
+   2. PowerShell:
+        cd "D:\Prasham's PDEU studies\Project - fullstack"
+        $env:ADMIN_TOKEN = "local-admin"
+        docker compose up -d
+   3. Check that everything is up:
+        docker compose ps
+      You should see 3 containers: api (healthy), grafana, prometheus.
+      "api" shows "health: starting" for ~30 s while the model loads - that is normal.
+
+
+=====================================================================================
+PART 2b - SETTING UP FROM A FRESH GITHUB CLONE (new computer)
+=====================================================================================
+ GitHub does NOT contain the dataset or the trained models (too large: GitHub rejects
+ files over 100 MB; the DistilBERT model alone is ~255 MB). Rebuild them like this:
+
+   git clone <your repo URL>
+   cd <repo folder>
+   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1      (creates .venv, installs everything)
+   .\.venv\Scripts\Activate.ps1
+
+   mkdir data\raw
+   Invoke-WebRequest http://cs.stanford.edu/people/alecmgo/trainingandtestdata.zip -OutFile data\raw\s140.zip
+   Expand-Archive data\raw\s140.zip data\raw\sentiment140
+
+   python -m sentiment pipeline                  ingest + split + train the fast model (~5 min)
+   python -m sentiment train -m distilbert       optional: best model (~1 hour on a laptop CPU)
+
+ Then continue with PART 2 (docker compose up -d).
+
+
+=====================================================================================
+PART 3 - USING THE MODEL FROM CODE
+=====================================================================================
+ PowerShell:
+   $body = @{ texts = @("I love this!", "worst service ever") } | ConvertTo-Json
+   Invoke-RestMethod -Method Post http://127.0.0.1:8000/v1/predict -ContentType "application/json" -Body $body | ConvertTo-Json -Depth 5
+
+ Python:
+   import httpx
+   r = httpx.post("http://127.0.0.1:8000/v1/predict",
+                  json={"texts": ["I love this!", "worst service ever"]})
+   print(r.json())
+
+ What you get back for each text:
+   label       "positive" or "negative"
+   score       probability that the text is positive (0.0 - 1.0)
+   uncertain   true = borderline / empty / unknown words -> treat with care
+   oov_rate    fraction of words the model has never seen
+
+ Limits: up to 256 texts per request, 5000 characters per text,
+         600 requests per minute per client (HTTP 429 = slow down).
+ Big batches (up to 20 000 texts): POST /v1/jobs, then GET /v1/jobs/{job_id}
+ (see /docs for details).
+
+
+=====================================================================================
+PART 4 - USEFUL DOCKER COMMANDS
+=====================================================================================
+ (always run them inside the project folder)
+
+   docker compose up -d              start everything (in the background)
+   docker compose down               stop everything (your data is kept)
+   docker compose ps                 show what is running
+   docker compose logs -f api        live log of the API   (Ctrl+C to exit the log view)
+   docker compose restart api        restart only the API (also clears the drift window)
+   docker compose up -d --build      REBUILD after you changed code in the src\ folder
+
+
+=====================================================================================
+PART 5 - RUNNING WITHOUT DOCKER (alternative)
+=====================================================================================
+ Stop Docker first (docker compose down), because both use port 8000.
+
+   cd "D:\Prasham's PDEU studies\Project - fullstack"
+   .\.venv\Scripts\Activate.ps1
+   python -m sentiment serve
+
+ Open http://127.0.0.1:8000 . Stop with Ctrl+C.
+ (Grafana/Prometheus are NOT available in this mode - they run only in Docker.)
+
+ If Activate.ps1 is blocked ("running scripts is disabled"), run once:
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+
+=====================================================================================
+PART 6 - RETRAINING / NEW MODELS (optional, advanced)
+=====================================================================================
+   cd "D:\Prasham's PDEU studies\Project - fullstack"
+   .\.venv\Scripts\Activate.ps1
+
+   python -m sentiment train -m tfidf_logreg     fast model   (~3 minutes)
+   python -m sentiment train -m distilbert       best model   (~1 hour on this laptop)
+   python -m sentiment registry                  list all models; * = the one being served
+
+ A new model only becomes the served model ("champion") if it is at least as good.
+ To load a newly promoted model into the running API without restarting:
+   Invoke-RestMethod -Method Post localhost:8000/admin/reload -Headers @{"x-admin-token"="local-admin"}
+
+ Serve a specific version instead (example: v1 = fast TF-IDF model, ~8x faster):
+   python -m sentiment serve  after setting   $env:MODEL_DIR = "artifacts\registry\sentiment-classifier\v1"
+
+ IMPORTANT: do not run training while other heavy programs run - it gets ~7x slower.
+
+ Other commands (python -m sentiment --help shows all):
+   python -m sentiment pipeline        full run: ingest data -> split -> train -> register
+   python -m sentiment drift-report    HTML report: reports\drift\drift_report.html
+   python -m pytest                    run all automated tests (should say "passed")
+   mlflow ui --backend-store-uri sqlite:///mlflow.db
+                                       experiment history at http://127.0.0.1:5000
+
+
+=====================================================================================
+PART 7 - TROUBLESHOOTING
+=====================================================================================
+ Problem: "docker: error during connect" / "cannot find the file specified"
+   -> Docker Desktop is not running. Start it and wait for "Engine running".
+
+ Problem: browser says "This site can't be reached" on 127.0.0.1:8000
+   -> Run  docker compose ps . If nothing is listed, run  docker compose up -d .
+   -> If api says "health: starting", wait 30 s and refresh.
+
+ Problem: /docs page is blank
+   -> Press Ctrl+F5 (hard refresh). The docs page works offline (no internet needed).
+
+ Problem: page shows "model not loaded"
+   -> docker compose logs api   and read the last lines.
+   -> The model files must exist in  artifacts\registry\sentiment-classifier\
+
+ Problem: "port is already allocated" / "address already in use" (port 8000)
+   -> Something else uses port 8000 (e.g. "python -m sentiment serve" still running
+      in another window). Close it (Ctrl+C) or run  docker compose down  and retry.
+
+ Problem: laptop very slow / out of memory
+   -> Close other heavy apps. Docker uses up to ~3 GB for the API.
+   -> Stop everything with  docker compose down  when you are not using it.
+
+ Problem: Grafana graphs are empty
+   -> Send some text from the demo page first; graphs update every ~10 seconds.
+   -> Top-right time range should be "Last 1 hour".
+
+ Problem: HTTP 429 "rate limit exceeded"
+   -> Too many requests from one client (more than 600/minute). Wait a few seconds.
+
+
+=====================================================================================
+PART 8 - WHERE THINGS ARE (folder map)
+=====================================================================================
+   HOW_TO_RUN.txt          this file
+   README.md               full technical documentation (design, results, safeguards)
+   configs\pipeline.yaml   ALL settings (thresholds, model sizes, limits...)
+   src\sentiment\          the program code
+   artifacts\registry\     trained models (v1 ... v5); the served one is marked in registry.json
+   data\                   datasets (raw, cleaned, train/val/test splits)
+   reports\                evaluation reports and charts for each training run
+   logs\                   prediction logs and run logs
+   docker-compose.yml      defines the 3 Docker services
+   .venv\                  the Python environment (do not delete)
+=====================================================================================

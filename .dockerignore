@@ -1,0 +1,15 @@
+# Without this the build context would include the venv, caches, raw data and MLflow runs (several GB).
+.venv
+.cache
+data
+mlruns
+mlflow.db
+logs
+reports
+artifacts
+tests
+**/__pycache__
+**/*.pyc
+.git
+.pytest_cache
+*.egg-info
